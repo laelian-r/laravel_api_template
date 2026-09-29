@@ -5,6 +5,9 @@ namespace App\Http\Controllers;
 use App\Http\Requests\UserRequest;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 
 class UsersController
 {
@@ -17,7 +20,7 @@ class UsersController
 
         $user->save();
 
-        $token = $user->createToken('token-name', ['user'])->plainTextToken;
+        $token = $user->createToken('auth', ['user'])->plainTextToken;
 
         return response([
             'user' => $user,
@@ -46,7 +49,7 @@ class UsersController
 
         // Création d'un token pour le user (sanctum, le token sera stocké en base de données et sera utilisé pour authentifier le user dans les prochaines requêtes)
         // via un Bearer Token
-        $token = $user->createToken('token-name', ['user'])->plainTextToken;
+        $token = $user->createToken('auth', ['user'])->plainTextToken;
 
         // Retourne une réponse JSON avec le user et le token
         return response([
@@ -62,5 +65,38 @@ class UsersController
         return response([
             'message' => 'Logged out',
         ]);
+    }
+
+    public function forgotPassword(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        Password::sendResetLink($request->only('email'));
+
+        // Même réponse que l'email existe ou non : on ne révèle pas quels comptes existent
+        return response(['message' => 'Un lien viens de vous être envoyé.']);
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'token' => 'required',
+            'email' => 'required|email',
+            'password' => 'required|min:8|confirmed', // exige password_confirmation
+        ]);
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $user, string $password) {
+                $user->forceFill(['password' => Hash::make($password)])->save();
+                $user->tokens()->delete(); // déconnecte toutes les sessions existantes
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            return response(['message' => 'Lien invalide ou expiré.'], 422);
+        }
+
+        return response(['message' => 'Votre mot de passe a bien été réinitialisé.']);
     }
 }
